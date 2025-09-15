@@ -181,7 +181,7 @@ class GMEEK():
             post_body = re.sub(r'<code class="notranslate">Gmeek-html(.*?)</code>', lambda match: html.unescape(match.group(1)), post_body, flags=re.DOTALL)
 
         postBase["postTitle"]=issue["postTitle"]
-        postBase["postUrl"]=self.blogBase["homeUrl"]+"/"+issue["postUrl"]
+        postBase["postUrl"]="/"+issue["postUrl"]
         postBase["description"]=issue["description"]
         postBase["ogImage"]=issue["ogImage"]
         postBase["postBody"]=post_body
@@ -268,8 +268,8 @@ class GMEEK():
         feed = FeedGenerator()
         feed.title(self.blogBase["title"])
         feed.description(self.blogBase["subTitle"])
-        feed.link(href=self.blogBase["homeUrl"])
-        feed.image(url=self.blogBase["avatarUrl"],title="avatar", link=self.blogBase["homeUrl"])
+        feed.link(href="/")
+        feed.image(url=self.blogBase["avatarUrl"],title="avatar", link="/")
         feed.copyright(self.blogBase["title"])
         feed.managingEditor(self.blogBase["title"])
         feed.webMaster(self.blogBase["title"])
@@ -277,18 +277,18 @@ class GMEEK():
 
         for num in self.blogBase["singeListJson"]:
             item=feed.add_item()
-            item.guid(self.blogBase["homeUrl"]+"/"+self.blogBase["singeListJson"][num]["postUrl"],permalink=True)
+            item.guid("/"+self.blogBase["singeListJson"][num]["postUrl"],permalink=True)
             item.title(self.blogBase["singeListJson"][num]["postTitle"])
             item.description(self.blogBase["singeListJson"][num]["description"])
-            item.link(href=self.blogBase["homeUrl"]+"/"+self.blogBase["singeListJson"][num]["postUrl"])
+            item.link(href="/"+self.blogBase["singeListJson"][num]["postUrl"])
             item.pubDate(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(self.blogBase["singeListJson"][num]["createdAt"])))
 
         for num in self.blogBase["postListJson"]:
             item=feed.add_item()
-            item.guid(self.blogBase["homeUrl"]+"/"+self.blogBase["postListJson"][num]["postUrl"],permalink=True)
+            item.guid("/"+self.blogBase["postListJson"][num]["postUrl"],permalink=True)
             item.title(self.blogBase["postListJson"][num]["postTitle"])
             item.description(self.blogBase["postListJson"][num]["description"])
-            item.link(href=self.blogBase["homeUrl"]+"/"+self.blogBase["postListJson"][num]["postUrl"])
+            item.link(href="/"+self.blogBase["postListJson"][num]["postUrl"])
             item.pubDate(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(self.blogBase["postListJson"][num]["createdAt"])))
 
         if self.oldFeedString!='':
