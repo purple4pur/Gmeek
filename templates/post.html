@@ -73,6 +73,7 @@
 {% block content %}
 <div class="listLabels">
     {% set num = blogBase['postNum'] -%}
+    {% set postListJson = blogBase['postListJson'] -%}
     <span class="Label LabelTime" style="background-color:{{ postListJson[num]['dateLabelColor'] }}">{{ postListJson[num]['createdDate'] }}</span>
     {% for label in postListJson[num]['labels'] -%}
     <span class="Label LabelName" style="background-color:{{ blogBase['labelColorDict'][label] }}"><object><a style="color:#fff" href="/tag.html#{{ label }}">{{ label }}</a></object></span>
