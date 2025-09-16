@@ -181,7 +181,7 @@ class GMEEK():
             post_body = re.sub(r'<code class="notranslate">Gmeek-html(.*?)</code>', lambda match: html.unescape(match.group(1)), post_body, flags=re.DOTALL)
 
         postBase["postTitle"]=issue["postTitle"]
-        postBase["postUrl"]="/"+issue["postUrl"]
+        postBase["postUrl"]=issue["postUrl"]
         postBase["description"]=issue["description"]
         postBase["ogImage"]=issue["ogImage"]
         postBase["postBody"]=post_body
