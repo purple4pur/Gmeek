@@ -94,6 +94,7 @@ class GMEEK():
         self.blogBase["postListJson"]=json.loads('{}')
         self.blogBase["singeListJson"]=json.loads('{}')
         self.blogBase["labelColorDict"]=self.labelColorDict
+        self.blogBase["sourceCodeUrl"]="https://github.com/"+options.repo_name
         if "displayTitle" not in self.blogBase:
             self.blogBase["displayTitle"]=self.blogBase["title"]
 
