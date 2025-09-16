@@ -47,7 +47,7 @@
     {%- endif -%}
 </div>
 <div class="title-right">
-    <a href="{{ blogBase['homeUrl'] }}/tag.html" id="buttonSearch" class="btn btn-invisible circle" title="{{ i18n['Search'] }}">
+    <a href="/tag.html" id="buttonSearch" class="btn btn-invisible circle" title="{{ i18n['Search'] }}">
         <svg class="octicon" width="16" height="16" >
             <path id="pathSearch" fill-rule="evenodd"></path>
         </svg>
@@ -60,13 +60,13 @@
     </a>
     {%- endfor %}
     {% for num in blogBase['singeListJson'] -%}
-    <a href="{{ blogBase['homeUrl'] }}/{{ blogBase['singeListJson'][num]['labels'][0] }}.html" class="btn btn-invisible circle" title="{{ blogBase['singeListJson'][num]['postTitle'] }}">
+    <a href="/{{ blogBase['singeListJson'][num]['labels'][0] }}.html" class="btn btn-invisible circle" title="{{ blogBase['singeListJson'][num]['postTitle'] }}">
         <svg class="octicon" width="16" height="16" >
             <path id="{{ blogBase['singeListJson'][num]['postTitle'] }}" fill-rule="evenodd"></path>
         </svg>
     </a>
     {%- endfor %}
-    <a href="{{ blogBase['homeUrl'] }}/rss.xml" target="_blank" id="buttonRSS" class="btn btn-invisible circle" title="RSS">
+    <a href="/rss.xml" target="_blank" id="buttonRSS" class="btn btn-invisible circle" title="RSS">
         <svg class="octicon" width="16" height="16" >
             <path id="pathRSS" fill-rule="evenodd"></path>
         </svg>
@@ -105,13 +105,13 @@
         {%- if blogBase['prevUrl']=='disabled' -%}
         <span class="previous_page" aria-disabled="true">{{ i18n['Previous'] }}</span>
         {% else -%}
-        <a class="previous_page" rel="previous" href="{{ blogBase['homeUrl'] }}{{ blogBase['prevUrl'] }}" aria-label="Previous Page">{{ i18n['Previous'] }}</a>
+        <a class="previous_page" rel="previous" href="{{ blogBase['prevUrl'] }}" aria-label="Previous Page">{{ i18n['Previous'] }}</a>
         {%- endif -%}
 
         {%- if blogBase['nextUrl']=='disabled' -%}
         <span class="next_page" aria-disabled="true">{{ i18n['Next'] }}</span>
         {% else -%}
-        <a class="next_page" rel="next" href="{{ blogBase['homeUrl'] }}{{ blogBase['nextUrl'] }}" aria-label="Next Page">{{ i18n['Next'] }}</a>
+        <a class="next_page" rel="next" href="{{ blogBase['nextUrl'] }}" aria-label="Next Page">{{ i18n['Next'] }}</a>
         {%- endif -%}
 
     </div>
