@@ -192,6 +192,7 @@ class GMEEK():
         postBase["head"]=issue["head"]
         postBase["top"]=issue["top"]
         postBase["postSourceUrl"]=issue["postSourceUrl"]
+        postBase["postNum"]=issue["postNum"]
         postBase["repoName"]=options.repo_name
         
         if issue["labels"][0] in self.blogBase["singlePage"]:
@@ -331,6 +332,7 @@ class GMEEK():
             self.blogBase[listJsonName][postNum]["postUrl"]="/"+urllib.parse.quote(gen_Html[len(self.root_dir):])
 
             self.blogBase[listJsonName][postNum]["postSourceUrl"]="https://github.com/"+options.repo_name+"/issues/"+str(issue.number)
+            self.blogBase[listJsonName][postNum]["postNum"]=postNum
             self.blogBase[listJsonName][postNum]["commentNum"]=issue.get_comments().totalCount
 
             if issue.body==None:
@@ -487,6 +489,7 @@ blog.blogBase["postListJson"]=dict(sorted(blog.blogBase["postListJson"].items(),
 for i in blog.blogBase["postListJson"]:
     del blog.blogBase["postListJson"][i]["description"]
     del blog.blogBase["postListJson"][i]["postSourceUrl"]
+    del blog.blogBase["postListJson"][i]["postNum"]
     del blog.blogBase["postListJson"][i]["htmlDir"]
     del blog.blogBase["postListJson"][i]["createdAt"]
     del blog.blogBase["postListJson"][i]["script"]
