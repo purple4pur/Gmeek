@@ -122,6 +122,7 @@ class GMEEK():
             self.i18n=i18n
         
         self.TZ=datetime.timezone(datetime.timedelta(hours=self.blogBase["UTC"]))
+        self.blogBase["build_time"]=datetime.datetime.now(self.TZ).isoformat(timespec='seconds')
 
     def get_repo(self,user:Github, repo:str):
         return user.get_repo(repo)
