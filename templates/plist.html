@@ -11,14 +11,16 @@
 
 {% block style %}
 <style>
-.avatar {transition: 0.8s;width:64px;height:64px;object-fit: cover;}
-.avatar:hover{transform: scale(1.15) rotate(360deg);}
-.title-left a{color:inherit;text-decoration:none;vertical-align: bottom;font-size:40px;font-weight: bold;font-family:Monaco;margin-left:8px;}
+.avatar {transition: transform 0.3s ease;width:64px;height:64px;object-fit: cover;}
+@media (hover:hover){.avatar:hover{transform: scale(1.1);}}
+@media (prefers-reduced-motion: reduce){.avatar{transition:none;}.avatar:hover{transform:none;}}
+.title-left .blogTitle{color:inherit;text-decoration:none;vertical-align: bottom;font-size:40px;font-weight: bold;font-family:Monaco,ui-monospace,monospace;margin:0 0 0 8px;line-height:1.2;}
 .title-right{display:flex;margin:auto 0 0 auto;}
 .title-right button{margin-right:8px;padding:16px;}
 .title-right .circle{padding: 14px 16px;}
 
-.SideNav{min-width: 360px;}
+.SideNav{width:100%;}
+.pagination a,.pagination span{display:inline-flex;align-items:center;justify-content:center;min-width:36px;min-height:36px;}
 .SideNav-icon{margin-right: 16px}
 .SideNav-item .Label{color: #fff;margin-left:4px;}
 .d-flex{min-width:0;}
@@ -27,7 +29,7 @@
 .listLabels object{max-height:16px;max-width:24px;}
 
 @media (max-width: 600px) {
-    body {padding: 8px;font-size:15px;}
+    body {padding: 12px;font-size:15px;}
     .avatar {width:40px;height:40px;}
     .title-left a{vertical-align:middle;font-size:20px;}
     .SideNav-item{padding:12px 10px;}
@@ -35,7 +37,7 @@
     #buttonRSS{display:none;}
 }
 </style>
-{{ blogBase['indexStyle'] }}
+{{ blogBase['indexStyle']|safe }}
 {% endblock %}
 
 {% block header %}
@@ -44,11 +46,11 @@
     {%- if blogBase['displayTitle']=='Meekdai' -%}
     <a class="blogTitle" href="https://meekdai.com"><span style="font-size:0;">M</span>eekdai</a>
     {% else -%}
-    <a class="blogTitle">{{ blogBase['displayTitle'] }}</a>
+    <h1 class="blogTitle">{{ blogBase['displayTitle'] }}</h1>
     {%- endif -%}
 </div>
 <div class="title-right">
-    <a href="/tag.html" id="buttonSearch" class="btn btn-invisible circle" title="{{ i18n['Search'] }}">
+    <a href="tag.html" id="buttonSearch" class="btn btn-invisible circle" title="{{ i18n['Search'] }}">
         <svg class="octicon" width="16" height="16" >
             <path id="pathSearch" fill-rule="evenodd"></path>
         </svg>
@@ -61,22 +63,22 @@
     </a>
     {%- endfor %}
     {% for num in blogBase['singeListJson'] -%}
-    <a href="/{{ blogBase['singeListJson'][num]['labels'][0] }}.html" class="btn btn-invisible circle" title="{{ blogBase['singeListJson'][num]['postTitle'] }}">
+    <a href="{{ blogBase['singeListJson'][num]['labels'][0] }}.html" class="btn btn-invisible circle" title="{{ blogBase['singeListJson'][num]['postTitle'] }}">
         <svg class="octicon" width="16" height="16" >
             <path id="{{ blogBase['singeListJson'][num]['postTitle'] }}" fill-rule="evenodd"></path>
         </svg>
     </a>
     {%- endfor %}
-    <a href="/rss.xml" target="_blank" id="buttonRSS" class="btn btn-invisible circle" title="RSS">
+    <a href="rss.xml" target="_blank" id="buttonRSS" class="btn btn-invisible circle" title="RSS">
         <svg class="octicon" width="16" height="16" >
             <path id="pathRSS" fill-rule="evenodd"></path>
         </svg>
     </a>
-    <a class="btn btn-invisible circle" onclick="modeSwitch()" title="{{ i18n['switchTheme'] }}" {%- if blogBase['themeMode']=='fix' -%}style="display:none;"{%- endif -%}>
+    <button type="button" class="btn btn-invisible circle" onclick="modeSwitch()" title="{{ i18n['switchTheme'] }}" {%- if blogBase['themeMode']=='fix' -%}style="display:none;"{%- endif -%}>
         <svg class="octicon" width="16" height="16" >
             <path id="themeSwitch" fill-rule="evenodd"></path>
         </svg>
-    </a>
+    </button>
 </div>
 {% endblock %}
 
@@ -84,37 +86,34 @@
 <div style="margin-bottom: 16px;">{{ blogBase['subTitle'] }}</div>
 <nav class="SideNav border">
 {% for num in postListJson -%}
-<a class="SideNav-item d-flex flex-items-center flex-justify-between" href="{{ postListJson[num]['postUrl']|e }}">
-    <div class="d-flex flex-items-center">
+<div class="SideNav-item d-flex flex-items-center flex-justify-between">
+    <a class="d-flex flex-items-center" style="color:inherit;text-decoration:none;min-width:0;" href="{{ postListJson[num]['postUrl'] }}">
         <svg class="SideNav-icon octicon" style="width:16px;height:16px"><path class="svgTop{{ postListJson[num]['top'] }}" d=""></path>
         </svg>
-        <span class="listTitle">{{ postListJson[num]['postTitle']|e }}</span>
-    </div>
+        <span class="listTitle">{{ postListJson[num]['postTitle'] }}</span>
+    </a>
     <div class="listLabels">
-        {% if postListJson[num]['commentNum']>0 %}<span class="Label" style="background-color:{{ blogBase['commentLabelColor'] }}">{{ postListJson[num]['commentNum'] }}</span>{% endif %}
+        {% if blogBase['needComment']==1 and postListJson[num]['commentNum']>0 %}<span class="Label" style="background-color:{{ blogBase['commentLabelColor'] }};color:{{ blogBase['commentLabelTextColor'] }}">{{ postListJson[num]['commentNum'] }}</span>{% endif %}
         {% for label in postListJson[num]['labels'] -%}
-        <span class="Label LabelName" style="background-color:{{ blogBase['labelColorDict'][label] }}"><object><a style="color:#fff" href="/tag.html#{{ label }}">{{ label }}</a></object></span>
+        <span class="Label LabelName" style="background-color:{{ blogBase['labelColorDict'][label] }};color:{{ blogBase['labelTextColorDict'][label] }}"><a style="color:inherit" href="tag.html#{{ label }}">{{ label }}</a></span>
         {%- endfor %}
-        <span class="Label LabelTime" style="background-color:{{ postListJson[num]['dateLabelColor'] }}">{{ postListJson[num]['createdDate'] }}</span>
+        <span class="Label LabelTime" style="background-color:{{ postListJson[num]['dateLabelColor'] }};color:{{ postListJson[num]['dateLabelTextColor'] }}">{{ postListJson[num]['createdDate'] }}</span>
     </div>
-</a>
+</div>
 {%- endfor %}
 </nav>
-{%- if blogBase['prevUrl']!='disabled' or blogBase['nextUrl']!='disabled' -%}
+{%- if blogBase['totalPages']>1 -%}
 <nav class="paginate-container" aria-label="Pagination">
     <div class="pagination">
-        {%- if blogBase['prevUrl']=='disabled' -%}
-        <span class="previous_page" aria-disabled="true">{{ i18n['Previous'] }}</span>
+        {% for page in range(1, blogBase['totalPages']+1) -%}
+        {% if page==blogBase['pageNum'] -%}
+        <span class="current_page" aria-current="page">{{ page }}</span>
+        {% elif page==1 -%}
+        <a href="index.html">{{ page }}</a>
         {% else -%}
-        <a class="previous_page" rel="previous" href="{{ blogBase['prevUrl'] }}" aria-label="Previous Page">{{ i18n['Previous'] }}</a>
-        {%- endif -%}
-
-        {%- if blogBase['nextUrl']=='disabled' -%}
-        <span class="next_page" aria-disabled="true">{{ i18n['Next'] }}</span>
-        {% else -%}
-        <a class="next_page" rel="next" href="{{ blogBase['nextUrl'] }}" aria-label="Next Page">{{ i18n['Next'] }}</a>
-        {%- endif -%}
-
+        <a href="page{{ page }}.html">{{ page }}</a>
+        {% endif -%}
+        {%- endfor %}
     </div>
 </nav>
 {%- endif %}
@@ -139,8 +138,8 @@ document.getElementById("{{ key }}").setAttribute("d",value=IconList["{{ key }}"
 {%- endfor %}
 
 {% for num in blogBase['singeListJson'] -%}
-document.getElementById("{{ blogBase['singeListJson'][num]['postTitle'] }}").setAttribute("d",value=IconList["{{ blogBase['singeListJson'][num]['labels'][0] }}"]);
+document.getElementById({{ blogBase['singeListJson'][num]['postTitle']|tojson }}).setAttribute("d",value=IconList[{{ blogBase['singeListJson'][num]['labels'][0]|tojson }}]);
 {%- endfor %}
 </script>
-{{ blogBase['indexScript'] }}
+{{ blogBase['indexScript']|safe }}
 {% endblock %}

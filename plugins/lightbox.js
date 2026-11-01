@@ -117,6 +117,11 @@
           top: 20px;
           right: 20px;
         }
+        @media (prefers-reduced-motion: reduce) {
+          .lb-lightbox-overlay, .lb-lightbox-image, .lb-lightbox-container, .lb-lightbox-nav, .lb-lightbox-close {
+            transition: none;
+          }
+        }
         @media (max-width: 768px) {
           .lb-lightbox-nav, .lb-lightbox-close {
             width: 40px;
@@ -131,6 +136,11 @@
     createLightbox() {
       this.overlay = document.createElement('div');
       this.overlay.className = 'lb-lightbox-overlay';
+      this.overlay.setAttribute('role', 'dialog');
+      this.overlay.setAttribute('aria-modal', 'true');
+      this.overlay.setAttribute('aria-label', 'Image viewer');
+      this.overlay.setAttribute('aria-hidden', 'true');
+      this.overlay.hidden = true;
 
       this.contentWrapper = document.createElement('div');
       this.contentWrapper.className = 'lb-lightbox-content-wrapper';
@@ -146,14 +156,17 @@
 
       this.prevButton = document.createElement('button');
       this.prevButton.className = 'lb-lightbox-nav lb-lightbox-prev';
+      this.prevButton.setAttribute('aria-label', 'Previous image');
       this.prevButton.innerHTML = '&#10094;';
 
       this.nextButton = document.createElement('button');
       this.nextButton.className = 'lb-lightbox-nav lb-lightbox-next';
+      this.nextButton.setAttribute('aria-label', 'Next image');
       this.nextButton.innerHTML = '&#10095;';
 
       this.closeButton = document.createElement('button');
       this.closeButton.className = 'lb-lightbox-close';
+      this.closeButton.setAttribute('aria-label', 'Close image viewer');
       this.closeButton.innerHTML = '&times;';
 
       this.imageWrapper.appendChild(this.image);
@@ -170,6 +183,15 @@
     }
 
     bindEvents() {
+      document.querySelectorAll('.markdown-body img, table img').forEach(image => {
+        if (!image.hasAttribute('tabindex')) image.tabIndex = 0;
+      });
+      document.addEventListener('keydown', event => {
+        if ((event.key === 'Enter' || event.key === ' ') && event.target.tagName === 'IMG' && !this.isOpen) {
+          event.preventDefault();
+          this.openFromImage(event.target);
+        }
+      });
       document.addEventListener('click', this.handleImageClick.bind(this), true);
       this.overlay.addEventListener('click', this.handleOverlayClick.bind(this));
       this.prevButton.addEventListener('click', this.showPreviousImage.bind(this));
@@ -187,10 +209,16 @@
       if (clickedImage && !this.isOpen) {
         event.preventDefault();
         event.stopPropagation();
-        this.images = Array.from(document.querySelectorAll('.markdown-body img, table img'));
-        this.currentIndex = this.images.indexOf(clickedImage);
-        this.open();
+        this.openFromImage(clickedImage);
       }
+    }
+
+    openFromImage(clickedImage) {
+      this.images = Array.from(document.querySelectorAll('.markdown-body img, table img'));
+      this.currentIndex = this.images.indexOf(clickedImage);
+      if (this.currentIndex < 0) return;
+      this.opener = clickedImage;
+      this.open();
     }
 
     handleOverlayClick(event) {
@@ -250,9 +278,13 @@
     }
 
     open() {
+      if (!this.images.length || this.currentIndex < 0) return;
       this.isOpen = true;
+      this.overlay.hidden = false;
+      this.overlay.setAttribute('aria-hidden', 'false');
       this.overlay.classList.add('active');
       this.showImage(this.images[this.currentIndex].src);
+      this.closeButton.focus();
       document.body.style.overflow = 'hidden';
       if (typeof this.options.onOpen === 'function') {
         this.options.onOpen();
@@ -262,12 +294,14 @@
     close() {
       document.body.style.overflow = '';
       this.overlay.classList.remove('active');
+      this.overlay.setAttribute('aria-hidden', 'true');
+      this.overlay.hidden = true;
       this.isOpen = false;
       this.clearPreloadedImages();
       if (typeof this.options.onClose === 'function') {
         this.options.onClose();
       }
-      this.unbindEvents();
+      if (this.opener) this.opener.focus();
     }
 
     showPreviousImage() {

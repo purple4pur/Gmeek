@@ -1,12 +1,12 @@
-<div id="footer1">Copyright © <span id="copyrightYear"></span> <a href="/">{{ blogBase['title'] }}</a></div>
+<div id="footer1">Copyright © <span id="copyrightYear"></span> <a href="{{ blogBase['linkPrefix'] }}index.html">{{ blogBase['title'] }}</a></div>
 <div id="footer2">
     {%- if blogBase['filingNum']!='' -%}
-    <span id="filingNum"><a href="https://beian.miit.gov.cn/" target="_blank">{{ blogBase['filingNum'] }}</a> • </span>
+    <span id="filingNum"><a href="https://beian.miit.gov.cn/" target="_blank" rel="noopener noreferrer">{{ blogBase['filingNum'] }}</a> • </span>
     {%- endif %}
     <span id="runday"></span>
-    <span><a href="/sitemap.txt" target="_blank">Sitemap</a> • </span>
+    <span><a href="{{ blogBase['linkPrefix'] }}sitemap.txt" target="_blank">Sitemap</a> • </span>
     <span><a href="{{ blogBase['sourceCodeUrl'] }}" target="_blank">Source Code</a> • </span>
-    <span>Powered by <a href="https://meekdai.com/Gmeek.html" target="_blank">Gmeek</a> - <a href="https://github.com/purple4pur/Gmeek" target="_blank">forked</a></span>
+    <span>Powered by <a href="https://meekdai.com/Gmeek.html" target="_blank" rel="noopener noreferrer">Gmeek</a> - <a href="https://github.com/purple4pur/Gmeek" target="_blank" rel="noopener noreferrer">forked</a></span>
 </div>
 <div id="footer3">Build @ {{ blogBase['build_time'] }}</div>
 

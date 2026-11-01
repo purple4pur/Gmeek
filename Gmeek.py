@@ -5,6 +5,7 @@ import json
 import time
 import datetime
 import shutil
+import hashlib
 import urllib
 import requests
 import argparse
@@ -12,7 +13,7 @@ import html
 from github import Github
 from xpinyin import Pinyin
 from feedgen.feed import FeedGenerator
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, select_autoescape
 from transliterate import translit
 from collections import OrderedDict
 ######################################################################################
@@ -35,6 +36,49 @@ IconBase={
     "check":"M13.78 4.22a.75.75 0 0 1 0 1.06l-7.25 7.25a.75.75 0 0 1-1.06 0L2.22 9.28a.751.751 0 0 1 .018-1.042.751.751 0 0 1 1.042-.018L6 10.94l6.72-6.72a.75.75 0 0 1 1.06 0Z"
 }
 ######################################################################################
+def safeFileName(name):
+    return re.sub(r'[<>:/\\|?*"]|[\0-\31]', '-', name)
+
+def textColor(hexColor):
+    """Return black or white, whichever has the higher contrast on hexColor."""
+    try:
+        channels=[int(hexColor[i:i+2], 16)/255 for i in (1, 3, 5)]
+    except (ValueError, IndexError):
+        return '#fff'
+    linear=[c/12.92 if c<=0.03928 else ((c+0.055)/1.055)**2.4 for c in channels]
+    luminance=0.2126*linear[0]+0.7152*linear[1]+0.0722*linear[2]
+    return '#fff' if 1.05/(luminance+0.05) >= (luminance+0.05)/0.05 else '#1f2328'
+
+def parsePostConfig(body):
+    for line in reversed((body or "").splitlines()):
+        match=re.search(r'##\s*(\{.*\})\s*##', line)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError as error:
+                print("Invalid post config JSON: %s" % error)
+                return {}
+    return {}
+
+def postDescription(body, period):
+    lines=[]
+    for line in (body or "").splitlines():
+        if re.fullmatch(r'(\[[^\]]*\]\([^)]*\)\s*[|｜]?\s*)+', line.strip()):
+            continue
+        lines.append(line)
+    text=re.sub(r'<!--.*?-->', '', "\n".join(lines), flags=re.S)
+    text=re.sub(r'```.*?```', '', text, flags=re.S)
+    text=re.sub(r'!\[[^\]]*\]\([^)]*\)', '', text)
+    text=re.sub(r'\[([^\]]*)\]\([^)]*\)', r'\1', text)
+    text=re.sub(r'^\s*#{1,6}\s*', '', text, flags=re.M)
+    text=re.sub(r'^\s*>\s?', '', text, flags=re.M)
+    text=re.sub(r'[*_`~]', '', text)
+    text=re.sub(r'\s+', ' ', text).strip()
+    if period in text:
+        text=text.split(period)[0]+period
+    return text.replace('"', "'")
+
+######################################################################################
 class GMEEK():
     def __init__(self,options):
         self.options=options
@@ -46,33 +90,44 @@ class GMEEK():
         self.post_dir=self.root_dir+self.post_folder
 
         user = Github(self.options.github_token)
-        self.repo = self.get_repo(user, options.repo_name)
-        self.feed = FeedGenerator()
+        self.repo = self.get_repo(user, self.options.repo_name)
         self.oldFeedString=''
+        self.changed=False
+        self.generated=set()
+        self.cacheEntries={}
+        self.cacheRenderHash=''
+        if os.path.exists("blogBase.json"):
+            with open("blogBase.json", "r", encoding="utf-8") as cacheFile:
+                oldBlogBase=json.load(cacheFile)
+            self.cacheRenderHash=oldBlogBase.get("renderHash", '')
+            for listName in ("postListJson", "singeListJson"):
+                self.cacheEntries.update(oldBlogBase.get(listName, {}))
 
         self.labelColorDict=json.loads('{}')
         for label in self.repo.get_labels():
             self.labelColorDict[label.name]='#'+label.color
         print(self.labelColorDict)
+        self.renderHash=self.computeRenderHash()
         self.defaultConfig()
         
+    def writeIfChanged(self, path, content, ignoreBuildTime=False):
+        if os.path.exists(path):
+            with open(path, 'r', encoding='utf-8') as existing:
+                old=existing.read()
+            if ignoreBuildTime:
+                pattern=r'<div id="footer3">.*?</div>'
+                old=re.sub(pattern, '', old)
+                content=re.sub(pattern, '', content)
+            if old==content:
+                return False
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        self.changed=True
+        return True
+
     def cleanFile(self):
-        workspace_path = os.environ.get('GITHUB_WORKSPACE')
-        if os.path.exists(workspace_path+"/"+self.backup_dir):
-            shutil.rmtree(workspace_path+"/"+self.backup_dir)
-
-        if os.path.exists(workspace_path+"/"+self.root_dir):
-            shutil.rmtree(workspace_path+"/"+self.root_dir)
-
-        if os.path.exists(self.backup_dir):
-            shutil.rmtree(self.backup_dir)
-            
-        if os.path.exists(self.root_dir):
-            shutil.rmtree(self.root_dir)
-
-        os.mkdir(self.backup_dir)
-        os.mkdir(self.root_dir)
-        os.mkdir(self.post_dir)
+        os.makedirs(self.backup_dir, exist_ok=True)
+        os.makedirs(self.post_dir, exist_ok=True)
 
         if os.path.exists(self.static_dir):
             for item in os.listdir(self.static_dir):
@@ -80,21 +135,48 @@ class GMEEK():
                 dst = os.path.join(self.root_dir, item)
                 if os.path.isfile(src):
                     shutil.copy(src, dst)
+                    self.generated.add(os.path.normpath(dst))
                     print(f"Copied {item} to docs")
                 elif os.path.isdir(src):
-                    shutil.copytree(src, dst)
+                    shutil.copytree(src, dst, dirs_exist_ok=True)
+                    for root, _, files in os.walk(dst):
+                        for name in files:
+                            self.generated.add(os.path.normpath(os.path.join(root, name)))
                     print(f"Copied directory {item} to docs")
         else:
             print("static does not exist")
 
+    def pruneDocs(self):
+        for folder in (self.root_dir, self.post_dir):
+            for name in os.listdir(folder):
+                path=os.path.normpath(os.path.join(folder, name))
+                if os.path.isfile(path) and name.endswith(".html") and path not in self.generated:
+                    os.remove(path)
+                    print("remove stale "+path)
+
+        keepBackups=set()
+        for listName in ("postListJson", "singeListJson"):
+            for entry in self.blogBase[listName].values():
+                if entry.get("backupFile"):
+                    keepBackups.add(os.path.normpath(entry["backupFile"]))
+        for name in os.listdir(self.backup_dir):
+            path=os.path.normpath(os.path.join(self.backup_dir, name))
+            if os.path.isfile(path) and path not in keepBackups:
+                os.remove(path)
+                print("remove stale "+path)
+
     def defaultConfig(self):
-        dconfig={"singlePage":[],"startSite":"","filingNum":"","onePageListNum":25,"commentLabelColor":"#006b75","yearColorList":["#bc4c00", "#0969da", "#1f883d", "#A333D0"],"i18n":"CN","themeMode":"manual","dayTheme":"light","nightTheme":"dark","urlMode":"pinyin","script":"","style":"","head":"","indexScript":"","indexStyle":"","bottomText":"","showPostSource":1,"iconList":{},"UTC":+8,"rssSplit":"sentence","exlink":{},"needComment":1,"allHead":""}
+        dconfig={"singlePage":[],"startSite":"","filingNum":"","onePageListNum":25,"commentLabelColor":"#006b75","yearColorList":["#bc4c00", "#0969da", "#1f883d", "#A333D0"],"i18n":"CN","themeMode":"manual","dayTheme":"light","nightTheme":"dark","urlMode":"pinyin","script":"","style":"","head":"","indexScript":"","indexStyle":"","bottomText":"","showPostSource":1,"iconList":{},"UTC":+8,"rssSplit":"sentence","exlink":{},"needComment":1,"allHead":"","linkPrefix":"","pageNum":1,"totalPages":1}
         config=json.loads(open('config.json', 'r', encoding='utf-8').read())
         self.blogBase={**dconfig,**config}.copy()
         self.blogBase["postListJson"]=json.loads('{}')
         self.blogBase["singeListJson"]=json.loads('{}')
         self.blogBase["labelColorDict"]=self.labelColorDict
-        self.blogBase["sourceCodeUrl"]="https://github.com/"+options.repo_name
+        self.blogBase["labelTextColorDict"]={name: textColor(color) for name, color in self.labelColorDict.items()}
+        self.blogBase["commentLabelTextColor"]=textColor(self.blogBase["commentLabelColor"])
+        if not isinstance(self.blogBase["onePageListNum"], int) or self.blogBase["onePageListNum"] < 1:
+            raise ValueError("onePageListNum must be a positive integer")
+        self.blogBase["sourceCodeUrl"]="https://github.com/"+self.options.repo_name
         if "displayTitle" not in self.blogBase:
             self.blogBase["displayTitle"]=self.blogBase["title"]
 
@@ -124,6 +206,17 @@ class GMEEK():
         self.TZ=datetime.timezone(datetime.timedelta(hours=self.blogBase["UTC"]))
         self.blogBase["build_time"]=datetime.datetime.now(self.TZ).isoformat(timespec='seconds')
 
+    def computeRenderHash(self):
+        digest=hashlib.sha256()
+        for name in sorted(os.listdir('templates')):
+            with open(os.path.join('templates', name), 'rb') as templateFile:
+                digest.update(name.encode('utf-8'))
+                digest.update(templateFile.read())
+        with open('config.json', 'rb') as configFile:
+            digest.update(configFile.read())
+        digest.update(json.dumps(self.labelColorDict, sort_keys=True).encode('utf-8'))
+        return digest.hexdigest()
+
     def get_repo(self,user:Github, repo:str):
         return user.get_repo(repo)
 
@@ -131,7 +224,7 @@ class GMEEK():
         payload = {"text": mdstr, "mode": "gfm"}
         headers = {"Authorization": "token {}".format(self.options.github_token)}
         try:
-            response = requests.post("https://api.github.com/markdown", json=payload, headers=headers)
+            response = requests.post("https://api.github.com/markdown", json=payload, headers=headers, timeout=(10, 60))
             response.raise_for_status()  # Raises an exception if status code is not 200
             return response.text
         except requests.RequestException as e:
@@ -139,16 +232,14 @@ class GMEEK():
 
     def renderHtml(self,template,blogBase,postListJson,htmlDir,icon):
         file_loader = FileSystemLoader('templates')
-        env = Environment(loader=file_loader)
+        env = Environment(loader=file_loader, autoescape=select_autoescape(['html']))
         template = env.get_template(template)
         output = template.render(blogBase=blogBase,postListJson=postListJson,i18n=self.i18n,IconList=icon)
-        f = open(htmlDir, 'w', encoding='UTF-8')
-        f.write(output)
-        f.close()
+        self.writeIfChanged(htmlDir, output, ignoreBuildTime=True)
+        self.generated.add(os.path.normpath(htmlDir))
 
     def createPostHtml(self,issue):
-        mdFileName=re.sub(r'[<>:/\\|?*\"]|[\0-\31]', '-', issue["postTitle"])
-        f = open(self.backup_dir+mdFileName+".md", 'r', encoding='UTF-8')
+        f = open(issue["backupFile"], 'r', encoding='UTF-8')
         post_body=self.markdown2html(f.read())
         f.close()
 
@@ -179,11 +270,12 @@ class GMEEK():
                         f'color: var(--fgColor-{style},var(--color-{style}-fg));}}</style>'
                     )
 
-        if '<code class="notranslate">Gmeek-html' in post_body:
+        if issue.get("trusted") and '<code class="notranslate">Gmeek-html' in post_body:
             post_body = re.sub(r'<code class="notranslate">Gmeek-html(.*?)</code>', lambda match: html.unescape(match.group(1)), post_body, flags=re.DOTALL)
 
         postBase["postTitle"]=issue["postTitle"]
         postBase["postUrl"]=issue["postUrl"]
+        postBase["linkPrefix"]="../" if issue["htmlDir"].startswith(self.post_dir) else ""
         postBase["description"]=issue["description"]
         postBase["ogImage"]=issue["ogImage"]
         postBase["postBody"]=post_body
@@ -194,7 +286,7 @@ class GMEEK():
         postBase["top"]=issue["top"]
         postBase["postSourceUrl"]=issue["postSourceUrl"]
         postBase["postNum"]=issue["postNum"]
-        postBase["repoName"]=options.repo_name
+        postBase["repoName"]=self.options.repo_name
         
         if issue["labels"][0] in self.blogBase["singlePage"]:
             postBase["bottomText"]=''
@@ -220,50 +312,18 @@ class GMEEK():
         keys=['sun','moon','sync','home','search','post']
         tagIcon=dict(zip(keys, map(IconBase.get, keys)))
 
-        postNum=len(self.blogBase["postListJson"])
-        pageFlag=0
-        while True:
-            topNum=pageFlag*self.blogBase["onePageListNum"]
-            print("topNum=%d postNum=%d"%(topNum,postNum))
-            if postNum<=self.blogBase["onePageListNum"]:
-                if pageFlag==0:
-                    onePageList=dict(list(self.blogBase["postListJson"].items())[:postNum])
-                    htmlDir=self.root_dir+"index.html"
-                    self.blogBase["prevUrl"]="disabled"
-                    self.blogBase["nextUrl"]="disabled"
-                else:
-                    onePageList=dict(list(self.blogBase["postListJson"].items())[topNum:topNum+postNum])
-                    htmlDir=self.root_dir+("page%d.html" % (pageFlag+1))
-                    if pageFlag==1:
-                        self.blogBase["prevUrl"]="/index.html"
-                    else:
-                        self.blogBase["prevUrl"]="/page%d.html" % pageFlag
-                    self.blogBase["nextUrl"]="disabled"
+        entries=list(self.blogBase["postListJson"].items())
+        perPage=self.blogBase["onePageListNum"]
+        totalPages=max(1, (len(entries)+perPage-1)//perPage)
+        self.blogBase["totalPages"]=totalPages
+        for pageIndex in range(totalPages):
+            self.blogBase["pageNum"]=pageIndex+1
+            onePageList=dict(entries[pageIndex*perPage:(pageIndex+1)*perPage])
+            htmlDir=self.root_dir+("index.html" if pageIndex==0 else "page%d.html" % (pageIndex+1))
+            self.renderHtml('plist.html',self.blogBase,onePageList,htmlDir,plistIcon)
+            print("create "+htmlDir)
 
-                self.renderHtml('plist.html',self.blogBase,onePageList,htmlDir,plistIcon)
-                print("create "+htmlDir)
-                break
-            else:
-                onePageList=dict(list(self.blogBase["postListJson"].items())[topNum:topNum+self.blogBase["onePageListNum"]])
-                postNum=postNum-self.blogBase["onePageListNum"]
-                if pageFlag==0:
-                    htmlDir=self.root_dir+"index.html"
-                    self.blogBase["prevUrl"]="disabled"
-                    self.blogBase["nextUrl"]="/page2.html"
-                else:
-                    htmlDir=self.root_dir+("page%d.html" % (pageFlag+1))
-                    if pageFlag==1:
-                        self.blogBase["prevUrl"]="/index.html"
-                    else:
-                        self.blogBase["prevUrl"]="/page%d.html" % pageFlag
-                    self.blogBase["nextUrl"]="/page%d.html" % (pageFlag+2)
-
-                self.renderHtml('plist.html',self.blogBase,onePageList,htmlDir,plistIcon)
-                print("create "+htmlDir)
-
-            pageFlag=pageFlag+1
-
-        self.renderHtml('tag.html',self.blogBase,onePageList,self.root_dir+"tag.html",tagIcon)
+        self.renderHtml('tag.html',self.blogBase,{},self.root_dir+"tag.html",tagIcon)
         print("create tag.html")
 
     def createFeedXml(self):
@@ -271,8 +331,8 @@ class GMEEK():
         feed = FeedGenerator()
         feed.title(self.blogBase["title"])
         feed.description(self.blogBase["subTitle"])
-        feed.link(href="/")
-        feed.image(url=self.blogBase["avatarUrl"],title="avatar", link="/")
+        feed.link(href=self.blogBase["homeUrl"] + "/")
+        feed.image(url=self.blogBase["avatarUrl"],title="avatar", link=self.blogBase["homeUrl"] + "/")
         feed.copyright(self.blogBase["title"])
         feed.managingEditor(self.blogBase["title"])
         feed.webMaster(self.blogBase["title"])
@@ -280,18 +340,18 @@ class GMEEK():
 
         for num in self.blogBase["singeListJson"]:
             item=feed.add_item()
-            item.guid(self.blogBase["homeUrl"]+self.blogBase["singeListJson"][num]["postUrl"],permalink=True)
+            item.guid(self.blogBase["homeUrl"]+"/"+self.blogBase["singeListJson"][num]["postUrl"],permalink=True)
             item.title(self.blogBase["singeListJson"][num]["postTitle"])
             item.description(self.blogBase["singeListJson"][num]["description"])
-            item.link(href=self.blogBase["homeUrl"]+self.blogBase["singeListJson"][num]["postUrl"])
+            item.link(href=self.blogBase["homeUrl"]+"/"+self.blogBase["singeListJson"][num]["postUrl"])
             item.pubDate(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(self.blogBase["singeListJson"][num]["createdAt"])))
 
         for num in self.blogBase["postListJson"]:
             item=feed.add_item()
-            item.guid(self.blogBase["homeUrl"]+self.blogBase["postListJson"][num]["postUrl"],permalink=True)
+            item.guid(self.blogBase["homeUrl"]+"/"+self.blogBase["postListJson"][num]["postUrl"],permalink=True)
             item.title(self.blogBase["postListJson"][num]["postTitle"])
             item.description(self.blogBase["postListJson"][num]["description"])
-            item.link(href=self.blogBase["homeUrl"]+self.blogBase["postListJson"][num]["postUrl"])
+            item.link(href=self.blogBase["homeUrl"]+"/"+self.blogBase["postListJson"][num]["postUrl"])
             item.pubDate(time.strftime("%a, %d %b %Y %H:%M:%S +0000", time.gmtime(self.blogBase["postListJson"][num]["createdAt"])))
 
         if self.oldFeedString!='':
@@ -316,136 +376,119 @@ class GMEEK():
 
     def createSitemap(self):
         self.blogBase["postListJson"]=dict(sorted(self.blogBase["postListJson"].items(),key=lambda x:x[1]["createdAt"],reverse=False))#使列表由时间排序
-        with open(self.root_dir + "sitemap.txt", "w", encoding="UTF-8") as sitemap:
-            print("====== create sitemap txt ======")
-            sitemap.write(self.blogBase["homeUrl"] + "\n")
-            for num in self.blogBase["singeListJson"]:
-                sitemap.write(self.blogBase["homeUrl"] + self.blogBase["singeListJson"][num]["postUrl"] + "\n")
-            for num in self.blogBase["postListJson"]:
-                sitemap.write(self.blogBase["homeUrl"] + self.blogBase["postListJson"][num]["postUrl"] + "\n")
+        print("====== create sitemap txt ======")
+        lines=[self.blogBase["homeUrl"]]
+        for num in self.blogBase["singeListJson"]:
+            lines.append(self.blogBase["homeUrl"] + "/" + self.blogBase["singeListJson"][num]["postUrl"])
+        for num in self.blogBase["postListJson"]:
+            lines.append(self.blogBase["homeUrl"] + "/" + self.blogBase["postListJson"][num]["postUrl"])
+        self.writeIfChanged(self.root_dir + "sitemap.txt", "\n".join(lines) + "\n")
 
     def addOnePostJson(self,issue):
-        if len(issue.labels)>=1:
-            if issue.labels[0].name in self.blogBase["singlePage"]:
-                listJsonName='singeListJson'
-                htmlFile='{}.html'.format(self.createFileName(issue,useLabel=True))
-                gen_Html = self.root_dir+htmlFile
+        if len(issue.labels)<1:
+            return None
+        if issue.labels[0].name in self.blogBase["singlePage"]:
+            listJsonName='singeListJson'
+            htmlFile='{}.html'.format(self.createFileName(issue,useLabel=True))
+            gen_Html = self.root_dir+htmlFile
+        else:
+            listJsonName='postListJson'
+            htmlFile='{}.html'.format(self.createFileName(issue))
+            gen_Html = self.post_dir+htmlFile
+
+        trusted=issue.user is not None and issue.user.login == self.repo.owner.login
+        postNum="P"+str(issue.number)
+        entry={}
+        entry["trusted"]=trusted
+        entry["htmlDir"]=gen_Html
+        entry["labels"]=[label.name for label in issue.labels]
+        entry["postTitle"]=issue.title
+        entry["postUrl"]=urllib.parse.quote(gen_Html[len(self.root_dir):])
+        entry["postSourceUrl"]="https://github.com/"+self.options.repo_name+"/issues/"+str(issue.number)
+        entry["postNum"]=postNum
+        entry["updatedAt"]=issue.updated_at.isoformat()
+        entry["needsRender"]=True
+        entry["commentNum"]=issue.comments
+
+        if issue.body==None:
+            entry["description"]=''
+            entry["wordCount"]=0
+        else:
+            entry["wordCount"]=len(issue.body)
+            if self.blogBase["rssSplit"]=="sentence":
+                period="。" if self.blogBase["i18n"]=="CN" else "."
             else:
-                listJsonName='postListJson'
-                htmlFile='{}.html'.format(self.createFileName(issue))
-                gen_Html = self.post_dir+htmlFile
+                period=self.blogBase["rssSplit"]
+            entry["description"]=postDescription(issue.body, period)
 
-            postNum="P"+str(issue.number)
-            self.blogBase[listJsonName][postNum]=json.loads('{}')
-            self.blogBase[listJsonName][postNum]["htmlDir"]=gen_Html
-            self.blogBase[listJsonName][postNum]["labels"]=[label.name for label in issue.labels]
-            self.blogBase[listJsonName][postNum]["postTitle"]=issue.title
-            self.blogBase[listJsonName][postNum]["postUrl"]="/"+urllib.parse.quote(gen_Html[len(self.root_dir):])
+        entry["top"]=0
+        for event in issue.get_events():
+            if event.event=="pinned":
+                entry["top"]=1
+            elif event.event=="unpinned":
+                entry["top"]=0
 
-            self.blogBase[listJsonName][postNum]["postSourceUrl"]="https://github.com/"+options.repo_name+"/issues/"+str(issue.number)
-            self.blogBase[listJsonName][postNum]["postNum"]=postNum
-            self.blogBase[listJsonName][postNum]["commentNum"]=issue.get_comments().totalCount
+        postConfig=parsePostConfig(issue.body) if trusted else {}
+        if postConfig:
+            print("Has Custom JSON parameters")
+            print(postConfig)
+        elif not trusted and "##" in (issue.body or ""):
+            print("Ignore custom JSON from untrusted author: %s" % issue.title)
 
-            if issue.body==None:
-                self.blogBase[listJsonName][postNum]["description"]=''
-                self.blogBase[listJsonName][postNum]["wordCount"]=0
-            else:
-                self.blogBase[listJsonName][postNum]["wordCount"]=len(issue.body)
-                if self.blogBase["rssSplit"]=="sentence":
-                    if self.blogBase["i18n"]=="CN":
-                        period="。"
-                    else:
-                        period="."
-                else:
-                    period=self.blogBase["rssSplit"]
-                self.blogBase[listJsonName][postNum]["description"]=issue.body.split(period)[0].replace("\"", "\'")+period
-                
-            self.blogBase[listJsonName][postNum]["top"]=0
-            for event in issue.get_events():
-                if event.event=="pinned":
-                    self.blogBase[listJsonName][postNum]["top"]=1
-                elif event.event=="unpinned":
-                    self.blogBase[listJsonName][postNum]["top"]=0
+        if "timestamp" in postConfig:
+            entry["createdAt"]=int(postConfig["timestamp"])
+        else:
+            entry["createdAt"]=int(issue.created_at.replace(tzinfo=datetime.timezone.utc).timestamp())
 
-            try:
-                postConfig=json.loads(issue.body.split("\r\n")[-1:][0].split("##")[1])
-                print("Has Custom JSON parameters")
-                print(postConfig)
-            except:
-                postConfig={}
+        for key in ("style", "script", "head"):
+            entry[key]=self.blogBase[key]+str(postConfig.get(key, ""))
+        entry["ogImage"]=postConfig.get("ogImage", self.blogBase["ogImage"])
 
-            if "timestamp" in postConfig:
-                self.blogBase[listJsonName][postNum]["createdAt"]=postConfig["timestamp"]
-            else:
-                self.blogBase[listJsonName][postNum]["createdAt"]=int(time.mktime(issue.created_at.timetuple()))
-            
-            if "style" in postConfig:
-                self.blogBase[listJsonName][postNum]["style"]=self.blogBase["style"]+str(postConfig["style"])
-            else:
-                self.blogBase[listJsonName][postNum]["style"]=self.blogBase["style"]
+        thisTime=datetime.datetime.fromtimestamp(entry["createdAt"]).astimezone(self.TZ)
+        entry["createdDate"]=thisTime.strftime("%Y-%m-%d")
+        dateLabelColor=self.blogBase["yearColorList"][int(thisTime.year)%len(self.blogBase["yearColorList"])]
+        entry["dateLabelColor"]=dateLabelColor
+        entry["dateLabelTextColor"]=textColor(dateLabelColor)
+        self.blogBase[listJsonName][postNum]=entry
 
-            if "script" in postConfig:
-                self.blogBase[listJsonName][postNum]["script"]=self.blogBase["script"]+str(postConfig["script"])
-            else:
-                self.blogBase[listJsonName][postNum]["script"]=self.blogBase["script"]
-
-            if "head" in postConfig:
-                self.blogBase[listJsonName][postNum]["head"]=self.blogBase["head"]+str(postConfig["head"])
-            else:
-                self.blogBase[listJsonName][postNum]["head"]=self.blogBase["head"]
-
-            if "ogImage" in postConfig:
-                self.blogBase[listJsonName][postNum]["ogImage"]=postConfig["ogImage"]
-            else:
-                self.blogBase[listJsonName][postNum]["ogImage"]=self.blogBase["ogImage"]
-
-            thisTime=datetime.datetime.fromtimestamp(self.blogBase[listJsonName][postNum]["createdAt"])
-            thisTime=thisTime.astimezone(self.TZ)
-            thisYear=thisTime.year
-            self.blogBase[listJsonName][postNum]["createdDate"]=thisTime.strftime("%Y-%m-%d")
-            self.blogBase[listJsonName][postNum]["dateLabelColor"]=self.blogBase["yearColorList"][int(thisYear)%len(self.blogBase["yearColorList"])]
-
-            mdFileName=re.sub(r'[<>:/\\|?*\"]|[\0-\31]', '-', issue.title)
-            f = open(self.backup_dir+mdFileName+".md", 'w', encoding='UTF-8')
-            
-            if issue.body==None:
-                f.write('')
-            else:
-                f.write(issue.body)
-            f.close()
-            return listJsonName
+        mdFileName=("%d-%s" % (issue.number, safeFileName(issue.title)))
+        entry["backupFile"]=self.backup_dir+mdFileName+".md"
+        self.writeIfChanged(entry["backupFile"], issue.body or '')
+        return listJsonName
 
     def runAll(self):
         print("====== start create static html ======")
         self.cleanFile()
 
+        useCache=self.cacheRenderHash==self.renderHash
         issues=self.repo.get_issues()
         for issue in issues:
+            if issue.pull_request:
+                continue
+            key="P"+str(issue.number)
+            cached=self.cacheEntries.get(key) if useCache else None
+            if cached and cached.get("updatedAt")==issue.updated_at.isoformat() and os.path.exists(cached.get("htmlDir", "")):
+                listJsonName="singeListJson" if issue.labels and issue.labels[0].name in self.blogBase["singlePage"] else "postListJson"
+                entry=dict(cached)
+                entry.pop("needsRender", None)
+                self.blogBase[listJsonName][key]=entry
+                self.generated.add(os.path.normpath(entry["htmlDir"]))
+                continue
             self.addOnePostJson(issue)
 
         for issue in self.blogBase["postListJson"].values():
-            self.createPostHtml(issue)
+            if issue.get("needsRender") or not os.path.exists(issue["htmlDir"]):
+                self.createPostHtml(issue)
 
         for issue in self.blogBase["singeListJson"].values():
-            self.createPostHtml(issue)
+            if issue.get("needsRender") or not os.path.exists(issue["htmlDir"]):
+                self.createPostHtml(issue)
 
         self.createPlistHtml()
         self.createFeedXml()
         self.createSitemap()
+        self.pruneDocs()
         print("====== create static html end ======")
-
-    def runOne(self,number_str):
-        print("====== start create static html ======")
-        issue=self.repo.get_issue(int(number_str))
-        if issue.state == "open":
-            listJsonName=self.addOnePostJson(issue)
-            self.createPostHtml(self.blogBase[listJsonName]["P"+number_str])
-            self.createPlistHtml()
-            self.createFeedXml()
-            self.createSitemap()
-            print("====== create static html end ======")
-        else:
-            print("====== issue is closed ======")
 
     def createFileName(self,issue,useLabel=False):
         if useLabel==True:
@@ -454,89 +497,89 @@ class GMEEK():
             if self.blogBase["urlMode"]=="issue":
                 fileName=str(issue.number)
             elif self.blogBase["urlMode"]=="ru_translit": 
-                fileName=str(translit(issue.title, language_code='ru', reversed=True)).replace(' ', '-')
+                fileName="%s-%d" % (str(translit(issue.title, language_code='ru', reversed=True)).replace(' ', '-'), issue.number)
             else:
-                fileName=Pinyin().get_pinyin(issue.title)
+                fileName="%s-%d" % (Pinyin().get_pinyin(issue.title), issue.number)
         
-        fileName=re.sub(r'[<>:/\\|?*\"]|[\0-\31]', '-', fileName)
-        return fileName
+        return safeFileName(fileName)
 
 ######################################################################################
-parser = argparse.ArgumentParser()
-parser.add_argument("github_token", help="github_token")
-parser.add_argument("repo_name", help="repo_name")
-parser.add_argument("--issue_number", help="issue_number", default=0, required=False)
-options = parser.parse_args()
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("github_token", help="github_token")
+    parser.add_argument("repo_name", help="repo_name")
+    options = parser.parse_args()
 
-blog=GMEEK(options)
+    blog=GMEEK(options)
 
-if not os.path.exists("blogBase.json"):
-    print("blogBase is not exists, runAll")
-    blog.runAll()
-else:
     if os.path.exists(blog.root_dir+'rss.xml'):
         oldFeedFile=open(blog.root_dir+'rss.xml','r',encoding='utf-8')
         blog.oldFeedString=oldFeedFile.read()
         oldFeedFile.close()
-    if options.issue_number=="0" or options.issue_number=="":
-        print("issue_number=='0', runAll")
-        blog.runAll()
+
+    print("runAll")
+    blog.runAll()
+
+    blog.blogBase["renderHash"]=blog.renderHash
+    for listName in ("postListJson", "singeListJson"):
+        for entry in blog.blogBase[listName].values():
+            entry.pop("needsRender", None)
+    blogBaseJson=re.sub(r'"build_time": "[^"]*"', '"build_time": ""', json.dumps(blog.blogBase))
+    if os.path.exists("blogBase.json"):
+        with open("blogBase.json", "r", encoding="utf-8") as listFile:
+            oldBlogBaseJson=re.sub(r'"build_time": "[^"]*"', '"build_time": ""', listFile.read())
     else:
-        f=open("blogBase.json","r")
-        print("blogBase is exists and issue_number!=0, runOne")
-        oldBlogBase=json.loads(f.read())
-        for key, value in oldBlogBase.items():
-            blog.blogBase[key] = value
-        f.close()
-        blog.blogBase["labelColorDict"]=blog.labelColorDict
-        blog.runOne(options.issue_number)
+        oldBlogBaseJson=None
+    if blogBaseJson!=oldBlogBaseJson:
+        with open("blogBase.json", "w", encoding="utf-8") as listFile:
+            listFile.write(json.dumps(blog.blogBase))
+        blog.changed=True
 
-listFile=open("blogBase.json","w")
-listFile.write(json.dumps(blog.blogBase))
-listFile.close()
+    commentNumSum=0
+    wordCount=0
+    print("====== create postList.json file ======")
+    blog.blogBase["postListJson"]=dict(sorted(blog.blogBase["postListJson"].items(),key=lambda x:x[1]["createdAt"],reverse=True))#使列表由时间排序
+    for i in blog.blogBase["postListJson"]:
+        del blog.blogBase["postListJson"][i]["description"]
+        del blog.blogBase["postListJson"][i]["postSourceUrl"]
+        del blog.blogBase["postListJson"][i]["postNum"]
+        del blog.blogBase["postListJson"][i]["htmlDir"]
+        del blog.blogBase["postListJson"][i]["createdAt"]
+        del blog.blogBase["postListJson"][i]["script"]
+        del blog.blogBase["postListJson"][i]["style"]
+        del blog.blogBase["postListJson"][i]["top"]
+        del blog.blogBase["postListJson"][i]["ogImage"]
 
-commentNumSum=0
-wordCount=0
-print("====== create postList.json file ======")
-blog.blogBase["postListJson"]=dict(sorted(blog.blogBase["postListJson"].items(),key=lambda x:x[1]["createdAt"],reverse=True))#使列表由时间排序
-for i in blog.blogBase["postListJson"]:
-    del blog.blogBase["postListJson"][i]["description"]
-    del blog.blogBase["postListJson"][i]["postSourceUrl"]
-    del blog.blogBase["postListJson"][i]["postNum"]
-    del blog.blogBase["postListJson"][i]["htmlDir"]
-    del blog.blogBase["postListJson"][i]["createdAt"]
-    del blog.blogBase["postListJson"][i]["script"]
-    del blog.blogBase["postListJson"][i]["style"]
-    del blog.blogBase["postListJson"][i]["top"]
-    del blog.blogBase["postListJson"][i]["ogImage"]
+        if 'head' in blog.blogBase["postListJson"][i]:
+            del blog.blogBase["postListJson"][i]["head"]
 
-    if 'head' in blog.blogBase["postListJson"][i]:
-        del blog.blogBase["postListJson"][i]["head"]
+        if 'commentNum' in blog.blogBase["postListJson"][i]:
+            commentNumSum=commentNumSum+blog.blogBase["postListJson"][i]["commentNum"]
+            del blog.blogBase["postListJson"][i]["commentNum"]
 
-    if 'commentNum' in blog.blogBase["postListJson"][i]:
-        commentNumSum=commentNumSum+blog.blogBase["postListJson"][i]["commentNum"]
-        del blog.blogBase["postListJson"][i]["commentNum"]
+        if 'wordCount' in blog.blogBase["postListJson"][i]:
+            wordCount=wordCount+blog.blogBase["postListJson"][i]["wordCount"]
+            del blog.blogBase["postListJson"][i]["wordCount"]
 
-    if 'wordCount' in blog.blogBase["postListJson"][i]:
-        wordCount=wordCount+blog.blogBase["postListJson"][i]["wordCount"]
-        del blog.blogBase["postListJson"][i]["wordCount"]
+    blog.blogBase["postListJson"]["labelColorDict"]=blog.labelColorDict
+    blog.blogBase["postListJson"]["labelTextColorDict"]=blog.blogBase["labelTextColorDict"]
 
-blog.blogBase["postListJson"]["labelColorDict"]=blog.labelColorDict
+    blog.writeIfChanged(blog.root_dir+"postList.json", json.dumps(blog.blogBase["postListJson"]))
 
-docListFile=open(blog.root_dir+"postList.json","w")
-docListFile.write(json.dumps(blog.blogBase["postListJson"]))
-docListFile.close()
+    if os.environ.get('GITHUB_EVENT_NAME')!='schedule' and (blog.changed or not os.path.exists((os.environ.get('GITHUB_WORKSPACE') or os.getcwd())+"/README.md")):
+        print("====== update readme file ======")
+        workspace_path = os.environ.get('GITHUB_WORKSPACE') or os.getcwd()
+        postNumSum=sum(1 for key in blog.blogBase["postListJson"] if key.startswith("P"))
+        readme="# %s :link: %s \r\n" % (blog.blogBase["title"],blog.blogBase["homeUrl"])
+        readme=readme+"### :page_facing_up: [%d](%s/tag.html) \r\n" % (postNumSum,blog.blogBase["homeUrl"])
+        readme=readme+"### :speech_balloon: %d \r\n" % commentNumSum
+        readme=readme+"### :hibiscus: %d \r\n" % wordCount
+        readme=readme+"### :alarm_clock: %s \r\n" % datetime.datetime.now(blog.TZ).strftime('%Y-%m-%d %H:%M:%S')
+        readme=readme+"### Powered by :heart: [Gmeek](https://github.com/Meekdai/Gmeek)\r\n"
+        readmeFile=open(workspace_path+"/README.md","w")
+        readmeFile.write(readme)
+        readmeFile.close()
 
-if os.environ.get('GITHUB_EVENT_NAME')!='schedule':
-    print("====== update readme file ======")
-    workspace_path = os.environ.get('GITHUB_WORKSPACE')
-    readme="# %s :link: %s \r\n" % (blog.blogBase["title"],blog.blogBase["homeUrl"])
-    readme=readme+"### :page_facing_up: [%d](%s/tag.html) \r\n" % (len(blog.blogBase["postListJson"])-1,blog.blogBase["homeUrl"])
-    readme=readme+"### :speech_balloon: %d \r\n" % commentNumSum
-    readme=readme+"### :hibiscus: %d \r\n" % wordCount
-    readme=readme+"### :alarm_clock: %s \r\n" % datetime.datetime.now(blog.TZ).strftime('%Y-%m-%d %H:%M:%S')
-    readme=readme+"### Powered by :heart: [Gmeek](https://github.com/Meekdai/Gmeek)\r\n"
-    readmeFile=open(workspace_path+"/README.md","w")
-    readmeFile.write(readme)
-    readmeFile.close()
+if __name__ == "__main__":
+    main()
 ######################################################################################

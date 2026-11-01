@@ -5,11 +5,11 @@
 <meta property="og:title" content="{{ blogBase['postTitle'] }}">
 <meta property="og:description" content="{{ blogBase['description'] }}">
 <meta property="og:type" content="article">
-<meta property="og:url" content="{{ blogBase['homeUrl'] }}{{ blogBase['postUrl'] }}">
+<meta property="og:url" content="{{ blogBase['homeUrl'] }}/{{ blogBase['postUrl'] }}">
 <meta property="og:image" content="{{ blogBase['ogImage'] }}">
 <title>{{ blogBase['postTitle'] }}</title>
 {% if blogBase['highlight']==1 %}<link href="//unpkg.com/@wooorm/starry-night@2.1.1/style/both.css" rel="stylesheet" />{% endif %}
-{{ blogBase['head'] }}
+{{ blogBase['head']|safe }}
 {% endblock %}
 
 {% block style %}
@@ -20,7 +20,7 @@
 .Label{color: #fff;margin-left:4px;}
 .listLabels{margin-bottom:12px;white-space:nowrap;display:flex;}
 .listLabels object{max-height:16px;max-width:24px;}
-#postBody{border-bottom: 1px solid var(--color-border-default);padding-bottom:36px;}
+#postBody{border-bottom: 1px solid var(--color-border-default);padding-bottom:36px;max-width:70ch;}
 #postBody hr{height:2px;}
 .markdown-body table{margin:auto;margin-bottom:16px;}
 #cmButton{height:48px;margin-top:48px;}
@@ -37,51 +37,50 @@
     top: 10px;
     right: 50px;
     color: var(--color-fg-on-emphasis);
-    background-color: var(--color-fg-muted);
+    background-color: #24292f;
     border-radius: 3px;
     padding: 5px 8px;
     font-size: 12px;
 }{% endif %}
 </style>
-{{ blogBase['style'] }}
+{{ blogBase['style']|safe }}
 
 {% endblock %}
 {% block header %}
 <h1 class="postTitle">{{ blogBase['postTitle'] }}</h1>
 <div class="title-right">
-    <a href="/" id="buttonHome" class="btn btn-invisible circle" title="{{ i18n['home'] }}">
+    <a href="{{ blogBase['linkPrefix'] }}index.html" id="buttonHome" class="btn btn-invisible circle" title="{{ i18n['home'] }}">
         <svg class="octicon" width="16" height="16">
             <path id="pathHome" fill-rule="evenodd"></path>
         </svg>
     </a>
     {% if blogBase['showPostSource']==1 %}
-    <a href="{{ blogBase['postSourceUrl'] }}" target="_blank" class="btn btn-invisible circle" title="Issue">
+    <a href="{{ blogBase['postSourceUrl'] }}" target="_blank" rel="noopener noreferrer" class="btn btn-invisible circle" title="Issue">
         <svg class="octicon" width="16" height="16">
             <path id="pathIssue" fill-rule="evenodd"></path>
         </svg>
     </a>
     {% endif %}
 
-    <a class="btn btn-invisible circle" onclick="modeSwitch();" title="{{ i18n['switchTheme'] }}" {%- if blogBase['themeMode']=='fix' -%}style="display:none;"{%- endif -%}>
+    <button type="button" class="btn btn-invisible circle" onclick="modeSwitch();" title="{{ i18n['switchTheme'] }}" {%- if blogBase['themeMode']=='fix' -%}style="display:none;"{%- endif -%}>
         <svg class="octicon" width="16" height="16" >
             <path id="themeSwitch" fill-rule="evenodd"></path>
         </svg>
-    </a>
+    </button>
 
 </div>
 {% endblock %}
 
 {% block content %}
 <div class="listLabels">
-    {% set num = blogBase['postNum'] -%}
-    {% set postListJson = blogBase['postListJson'] -%}
-    <span class="Label LabelTime" style="background-color:{{ postListJson[num]['dateLabelColor'] }}">{{ postListJson[num]['createdDate'] }}</span>
-    {% for label in postListJson[num]['labels'] -%}
-    <span class="Label LabelName" style="background-color:{{ blogBase['labelColorDict'][label] }}"><object><a style="color:#fff" href="/tag.html#{{ label }}">{{ label }}</a></object></span>
+    {% set entry = blogBase['postListJson'].get(blogBase['postNum']) or blogBase['singeListJson'].get(blogBase['postNum']) -%}
+    <span class="Label LabelTime" style="background-color:{{ entry['dateLabelColor'] }};color:{{ entry['dateLabelTextColor'] }}">{{ entry['createdDate'] }}</span>
+    {% for label in entry['labels'] -%}
+    <span class="Label LabelName" style="background-color:{{ blogBase['labelColorDict'][label] }};color:{{ blogBase['labelTextColorDict'][label] }}"><a style="color:inherit" href="{{ blogBase['linkPrefix'] }}tag.html#{{ label }}">{{ label }}</a></span>
     {%- endfor %}
 </div>
-<div class="markdown-body" id="postBody">{{ blogBase['postBody'] }}</div>
-<div style="font-size:small;margin-top:8px;float:right;">{{ blogBase['bottomText'] }}</div>
+<div class="markdown-body" id="postBody">{{ blogBase['postBody']|safe }}
+<div style="font-size:small;margin-top:8px;float:right;">{{ blogBase['bottomText']|safe }}</div>
 {% if blogBase['needComment']==1 %}
 <button class="btn btn-block" type="button" onclick="openComments()" id="cmButton">{{ i18n['comments'] }}</button>
 <div class="comments" id="comments"></div>
@@ -92,7 +91,7 @@
 <script>
 document.getElementById("pathHome").setAttribute("d",IconList["home"]);
 {% if blogBase['showPostSource']==1 %}document.getElementById("pathIssue").setAttribute("d",IconList["github"]);{% endif %}
-{% if blogBase['commentNum']>0 -%}
+{% if blogBase['needComment']==1 and blogBase['commentNum']>0 -%}
     cmButton=document.getElementById("cmButton");
     span=document.createElement("span");
     span.setAttribute("class","Counter");
@@ -209,5 +208,5 @@ document.addEventListener('DOMContentLoaded', () => {
 {%- endif %}
 
 </script>
-{{ blogBase['script'] }}
+{{ blogBase['script']|safe }}
 {% endblock %}

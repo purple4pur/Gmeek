@@ -23,7 +23,15 @@ function createTOC() {
         tocElement.appendChild(link);
     });
     
-    tocElement.insertAdjacentHTML('beforeend', '<a class="toc-end" onclick="window.scrollTo({top:0,behavior: \'smooth\'});">Top</a>');
+    const backToTop = document.createElement('button');
+    backToTop.type = 'button';
+    backToTop.className = 'toc-end';
+    backToTop.textContent = 'Top';
+    backToTop.addEventListener('click', () => {
+        const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        window.scrollTo({top: 0, behavior: reduce ? 'auto' : 'smooth'});
+    });
+    tocElement.appendChild(backToTop);
     contentContainer.prepend(tocElement);
 }
 
@@ -36,7 +44,7 @@ document.addEventListener("DOMContentLoaded", function() {
         left:50%;
         transform: translateX(50%) translateX(320px);
         width:200px;
-        border: 1px solid #e1e4e8;
+        border: 1px solid var(--color-border-default, #e1e4e8);
         border-radius: 6px;
         padding: 10px;
         overflow-y: auto;
@@ -46,15 +54,24 @@ document.addEventListener("DOMContentLoaded", function() {
     .toc-title{
         font-weight: bold;
         text-align: center;
-        border-bottom: 1px solid #ddd;
+        border-bottom: 1px solid var(--color-border-default, #ddd);
         padding-bottom: 8px;
     }
     .toc-end{
+        width: 100%;
+        margin-top: 8px;
+        padding: 8px;
+        font: inherit;
         font-weight: bold;
         text-align: center;
         cursor: pointer;
+        border: 0;
+        border-radius: 6px;
+        color: inherit;
+        background: transparent;
         visibility: hidden;
-    }  
+    }
+    .toc-end:hover{background-color: var(--color-action-list-item-default-hover-bg, rgba(0,0,0,0.06));}  
     .toc a {
         display: block;
         color: var(--color-diff-blob-addition-num-text);
@@ -62,7 +79,7 @@ document.addEventListener("DOMContentLoaded", function() {
         padding: 5px 0;
         font-size: 14px;
         line-height: 1.5;
-        border-bottom: 1px solid #e1e4e8;
+        border-bottom: 1px solid var(--color-border-default, #e1e4e8);
     }
     .toc a:last-child {
         border-bottom: none;
@@ -87,14 +104,13 @@ document.addEventListener("DOMContentLoaded", function() {
     style.textContent = css;
     document.head.appendChild(style);
 
-    window.onscroll = function() {
-        const backToTopButton = document.querySelector('.toc-end');
-        if (document.body.scrollTop > 20 || document.documentElement.scrollTop > 20) {
-            backToTopButton.style="visibility: visible;"
-        } else {
-            backToTopButton.style="visibility: hidden;"
-        }
-    };
+    const backToTopButton = document.querySelector('.toc-end');
+    if (backToTopButton) {
+        window.addEventListener('scroll', function() {
+            const scrolled = document.body.scrollTop > 20 || document.documentElement.scrollTop > 20;
+            backToTopButton.style.visibility = scrolled ? 'visible' : 'hidden';
+        }, {passive: true});
+    }
 
     console.log("\n %c GmeekTOC Plugins https://github.com/Meekdai/Gmeek \n","padding:5px 0;background:#C333D0;color:#fff");
 });

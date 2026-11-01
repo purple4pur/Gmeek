@@ -22,6 +22,16 @@
 通过Actions->build Gmeek->Run workflow->里面的按钮全局重新生成一次
 ```
 
+### 本地构建
+
+需要 [uv](https://docs.astral.sh/uv/) 和 Python 3.14+。依赖版本记录在`uv.lock`。
+
+```bash
+uv sync
+uv run python Gmeek.py <github_token> <owner/repo>
+uv run pytest
+```
+
 ### 提交问题
 
 1. 如果有问题可参考[Gmeek快速上手](https://blog.meekdai.com/post/Gmeek-kuai-su-shang-shou.html)   

@@ -1,0 +1,21 @@
+[project]
+name = "gmeek"
+version = "0.1.0"
+description = "A lightweight blog generator for GitHub Issues and GitHub Pages"
+requires-python = ">=3.14"
+dependencies = [
+    "feedgen",
+    "Jinja2",
+    "PyGithub",
+    "requests",
+    "transliterate",
+    "xpinyin",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+]
+
+[tool.uv]
+package = false
